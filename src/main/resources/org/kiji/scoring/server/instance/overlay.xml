@@ -26,5 +26,5 @@
 -->
 <!DOCTYPE Configure PUBLIC "-//Jetty//Configure//EN" "http://www.eclipse.org/jetty/configure.dtd">
 <Configure class="org.eclipse.jetty.webapp.WebAppContext">
-  <Set name="contextPath">/%CONTEXT_PATH%</Set>
+  <Set name="contextPath">/models/%CONTEXT_PATH%</Set>
 </Configure>

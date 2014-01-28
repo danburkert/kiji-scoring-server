@@ -40,11 +40,6 @@ import org.kiji.modelrepo.ModelLifeCycle
 import org.kiji.modelrepo.ArtifactName
 import org.kiji.modelrepo.uploader.MavenArtifactName
 
-object ModelRepoScannerState extends Enumeration {
-  type State = Value
-  val Runnable, Running, Stopped = Value
-}
-
 /**
  * Performs the actual deployment/undeployment of model lifecycles by scanning the model
  * repository for changes. The scanner will download any necessary artifacts from the
@@ -56,32 +51,15 @@ class ModelRepoScanner(
   mScanIntervalSeconds: Int,
   mBaseDir: File
 ) extends Runnable {
-
-  val LOG: Logger = LoggerFactory.getLogger(classOf[ModelRepoScanner])
-
-  // Setup some constants that will get used when generating the various files to deploy
-  // the lifecycle.
-  val CONTEXT_PATH: String = "CONTEXT_PATH"
-  val MODEL_NAME: String = "MODEL_NAME"
-  val MODEL_GROUP: String = "MODEL_GROUP"
-  val MODEL_ARTIFACT: String = "MODEL_ARTIFACT"
-  val MODEL_VERSION: String = "MODEL_VERSION"
-  val MODEL_REPO_URI: String = "MODEL_REPO_URI"
-
-  // Some file constants
-  val OVERLAY_FILE: String = "/org/kiji/scoring/server/instance/overlay.xml"
-  val WEB_OVERLAY_FILE: String = "/org/kiji/scoring/server/instance/web-overlay.xml"
-  val JETTY_TEMPLATE_FILE: String = "/org/kiji/scoring/server/template/template.xml"
+  import org.kiji.scoring.server.ModelRepoScanner._
 
   /** The webapps folder relative to the base directory of the server.server. */
   val webappsFolder: File = new File(
       mBaseDir, new File(ScoringServer.MODELS_FOLDER, OverlayedAppProvider.WEBAPPS).getPath)
 
-
   /** The instances folder relative to the base directory of the server. */
   val instancesFolder: File = new File(
       mBaseDir, new File(ScoringServer.MODELS_FOLDER, OverlayedAppProvider.INSTANCES).getPath)
-
 
   /** The templates folder relative to the base directory of the server. */
   val templatesFolder: File = new File(
@@ -103,78 +81,58 @@ class ModelRepoScanner(
    */
   private val mDeployedWarFiles = mutable.Map[String, String]()
 
-  var mState: ModelRepoScannerState.State = ModelRepoScannerState.Runnable
+  // This will load up the in memory data structures for the scoring server
+  // based on information from disk. First go through the webapps and any webapp that doesn't
+  // have a corresponding location file, delete.
 
-  initializeState()
+  // Validate webapps
+  val (_, invalidWarFiles) = webappsFolder.listFiles.partition {
+    file: File => file.isFile &&
+        file.getName.endsWith(".war") &&
+        new File(webappsFolder, file.getName + ".loc").exists
+  }
+  invalidWarFiles.foreach { delete }
 
-  /**
-   * Initializes the state of the internal maps from disk but going through the
-   * templates and webapps folders to populate different maps. Also will clean up files/folders
-   * that are not valid.
-   *
-   * This is called upon construction of the ModelRepoScanner and can't be called when the scanner
-   * is running.
-   */
-  private def initializeState() {
+  // Validate the templates to make sure that they are pointing to a valid
+  // war file.
+  val (validTemplates, invalidTemplates) = templatesFolder.listFiles.partition {
+    templateDir: File => {
+      val (_, warBaseName) = parseDirectoryName(templateDir.getName)
+      // For a template to be valid, it must have a name and warBaseName AND the
+      // warBaseName.war must exist AND warBaseName.war.loc must also exist
+      val warFile = new File(webappsFolder, warBaseName.getOrElse("") + ".war")
+      val locFile = new File(webappsFolder, warBaseName.getOrElse("") + ".war.loc")
 
-    if(mState != ModelRepoScannerState.Runnable) {
-      throw new IllegalStateException("Can not initialize state while scanner is not runnable.")
+      templateDir.isDirectory && !warBaseName.isEmpty && warFile.exists && locFile.exists
     }
+  }
 
-    // This will load up the in memory data structures for the scoring server
-    // based on information from disk. First go through the webapps and any webapp that doesn't
-    // have a corresponding location file, delete.
-
-    // Any undeploys will happen in the checkForUpdates call at the end.
-    val templatesDir = templatesFolder
-    val webappsDir = webappsFolder
-    val instancesDir = instancesFolder
-
-    // Validate webapps
-    val (_, invalidWarFiles) = webappsDir.listFiles().partition(f => {
-      val locationFile = new File(webappsDir, f.getName() + ".loc")
-      locationFile.exists() && f.getName().endsWith(".war") && f.isFile()
-    })
-
-    invalidWarFiles.foreach(f => {
-      delete(f)
-    })
-
-    // Validate the templates to make sure that they are pointing to a valid
-    // war file.
-    val (validTemplates, invalidTemplates) = templatesDir.listFiles()
-      .partition(templateDir => {
-        val (_, warBaseName) = parseDirectoryName(templateDir.getName())
-        // For a template to be valid, it must have a name and warBaseName AND the
-        // warBaseName.war must exist AND warBaseName.war.loc must also exist
-        val warFile = new File(webappsDir, warBaseName.getOrElse("") + ".war")
-        val locFile = new File(webappsDir, warBaseName.getOrElse("") + ".war.loc")
-
-        !warBaseName.isEmpty && warFile.exists() && locFile.exists() && templateDir.isDirectory()
-      })
-
-    invalidTemplates.foreach(template => {
-      LOG.info("Deleting invalid template directory " + template)
+  invalidTemplates.foreach {
+    template: File => {
+      LOG.info("Deleting invalid template directory {}", template)
       delete(template)
-    })
+    }
+  }
 
-    validTemplates.foreach(template => {
-      val (templateName, warBaseName) = parseDirectoryName(template.getName())
-      val locFile = new File(webappsDir, warBaseName.get + ".war.loc")
+  validTemplates.foreach {
+    template: File => {
+      val (templateName, warBaseName) = parseDirectoryName(template.getName)
+      val locFile = new File(webappsFolder, warBaseName.get + ".war.loc")
       val location = getLocationInformation(locFile)
       mDeployedWarFiles.put(location, templateName)
-    })
+    }
+  }
 
-    // Loop through the instances and add them to the map.
-    instancesDir.listFiles().foreach(instance => {
+  // Loop through the instances and add them to the map.
+  instancesFolder.listFiles.foreach {
+    instance: File => {
       //templateName=artifactFullyQualifiedName
-      val (templateName, artifactName) = parseDirectoryName(instance.getName())
+      val (templateName, artifactName) = parseDirectoryName(instance.getName)
 
       // This is an inefficient lookup on validTemplates but it's a one time thing on
       // startup of the server scanner.
-      if (!instance.isDirectory() || artifactName.isEmpty
-        || !validTemplates.contains(templateName)) {
-        LOG.info("Deleting invalid instance " + instance.getPath())
+      if (!instance.isDirectory || artifactName.isEmpty || !validTemplates.contains(templateName)) { // TODO there is a type mismatch here, figure out what it should be.
+        LOG.info("Deleting invalid instance " + instance.getPath)
         delete(instance)
       } else {
         try {
@@ -185,62 +143,25 @@ class ModelRepoScanner(
           case ex: IllegalArgumentException => delete(instance)
         }
       }
-    })
-
-    val (deployed: Int, undeployed: Int) = checkForUpdates
-    LOG.debug("{} new models deployed. {} old models undeployed.", deployed, undeployed)
-
-    mState = ModelRepoScannerState.Running
-  }
-
-  /**
-   * Deletes a given file or directory.
-   *
-   * @param file is the file/folder to delete.
-   */
-  private def delete(file: File) {
-    if (file.isDirectory()) {
-      FileUtils.deleteDirectory(file)
-    } else {
-      file.delete()
     }
   }
 
-  /**
-   * Parses a Jetty template/instance directory using the "=" as the delimiter. Returns
-   * the two parts that comprise the directory.
-   *
-   * @param inputDirectory is the directory name to parse.
-   * @return a 2-tuple containing the two strings on either side of the "=" operator. If there is no
-   *     "=" in the string, then the second part will be None.
-   */
-  private def parseDirectoryName(
-      inputDirectory: String
-  ): (String, Option[String]) = {
-    val parts: Array[String] = inputDirectory.split("=")
-    if (parts.length == 1) {
-      (parts(0), None)
-    } else if (parts.length == 2) {
-      (parts(0), Some(parts(1)))
-    } else {
-      throw new IllegalArgumentException(
-        "Jetty template/instance directory must contain 0 or 1 '=', got: %s".format(inputDirectory))
-    }
-  }
+  val (deployed: Set[ArtifactName], _) = checkForUpdates()
+  LOG.debug("models initially deployed: {}.", deployed)
+
+  private[this] var mState: ModelRepoScannerState = Running
 
   /**
    * Turns off the internal run flag to safely stop the scanning of the model repository
    * table.
    */
-  def shutdown() {
-    mState = ModelRepoScannerState.Stopped
-  }
+  def shutdown() { mState = Stopped }
 
   override def run() {
-    while (mState == ModelRepoScannerState.Running) {
+    while (mState == Running) {
       LOG.debug("Scanning model repository for changes...")
-      val (deployed: Int, undeployed: Int) = checkForUpdates
-      LOG.debug("{} new models deployed. {} old models undeployed.", deployed, undeployed)
+      val (deployed, undeployed) = checkForUpdates()
+      LOG.debug("New models deployed: {}. Old models undeployed: {}.", deployed, undeployed)
       Thread.sleep(mScanIntervalSeconds * 1000L)
     }
   }
@@ -249,14 +170,14 @@ class ModelRepoScanner(
    * Checks the model repository table for updates and deploys/undeploys lifecycles
    * as necessary.
    *
-   * @return a two-tuple of the number of lifecycles deployed and undeployed
+   * @return (undeployed lifecycles, newly deployed lifecycles)
    */
-  def checkForUpdates: (Int, Int) = {
+  def checkForUpdates(): (Set[ArtifactName], Set[ArtifactName]) = {
     val allEnabledLifecycles: Map[ArtifactName, ModelLifeCycle] = getAllEnabledLifecycles.
-      foldLeft(Map[ArtifactName, ModelLifeCycle]()) {
-        (accumulatorMap: Map[ArtifactName, ModelLifeCycle], lifecycle: ModelLifeCycle) =>
-            accumulatorMap + (lifecycle.getArtifactName -> lifecycle)
-      }
+        foldLeft(Map[ArtifactName, ModelLifeCycle]()) {
+          (accumulatorMap: Map[ArtifactName, ModelLifeCycle], lifecycle: ModelLifeCycle) =>
+              accumulatorMap + (lifecycle.getArtifactName -> lifecycle)
+        }
 
     // Split the lifecycle map into those that are already deployed and those that
     // should be undeployed (based on whether or not the currently enabled lifecycles
@@ -287,7 +208,7 @@ class ModelRepoScanner(
       }
     }
 
-    (toDeploy.size, toUndeploy.size)
+    (toDeploy, toUndeploy.keySet.toSet)
   }
 
   /**
@@ -366,27 +287,11 @@ class ModelRepoScanner(
    * @param lifecycle is the model lifecycle object that is associated with the artifact.
    */
   private def writeLocationInformation(
-      artifactFileName: String,
-      lifecycle: ModelLifeCycle
-  ) = {
+    artifactFileName: String,
+    lifecycle: ModelLifeCycle
+  ) {
     doAndClose(new PrintWriter(new File(webappsFolder, artifactFileName + ".loc"), "UTF-8")) {
       pw: PrintWriter => pw.println(lifecycle.getLocation)
-    }
-  }
-
-  /**
-   * Returns the location information from the specified file. The input file is the name of the
-   * location file that was written using the writeLocationInformation method.
-   *
-   * @param locationFile is the name of the location file containing the lifecycle location
-   *     information.
-   * @return the location information in the file.
-   */
-  private def getLocationInformation(
-      locationFile: File
-  ): String = {
-    doAndClose(Source.fromFile(locationFile)) {
-      inputSource: BufferedSource => inputSource.mkString.trim
     }
   }
 
@@ -401,9 +306,9 @@ class ModelRepoScanner(
    *     the ModelLifeCycle.
    */
   private def createNewInstance(
-      lifecycle: ModelLifeCycle,
-      templateName: String,
-      bookmarkParams: Map[String, String]
+    lifecycle: ModelLifeCycle,
+    templateName: String,
+    bookmarkParams: Map[String, String]
   ) {
     // This will create a new instance by leveraging the template files on the classpath
     // and create the right directory. Maybe first create the directory in a temp location and
@@ -428,6 +333,37 @@ class ModelRepoScanner(
   }
 
   /**
+   * Returns all the currently enabled lifecycles from the model repository.
+   *
+   * @return all the currently enabled lifecycles from the model repository.
+   */
+  private def getAllEnabledLifecycles: Set[ModelLifeCycle] = {
+    mKijiModelRepo.getModelLifeCycles(null, 1, true).asScala.toSet
+  }
+}
+
+/** Resources useful to all instances of ModelRepoScanner. */
+object ModelRepoScanner {
+  val LOG: Logger = LoggerFactory.getLogger(classOf[ModelRepoScanner])
+
+  // Constants that will get used when generating the various files to deploy a model.
+  val CONTEXT_PATH: String = "CONTEXT_PATH"
+  val MODEL_NAME: String = "MODEL_NAME"
+  val MODEL_GROUP: String = "MODEL_GROUP"
+  val MODEL_ARTIFACT: String = "MODEL_ARTIFACT"
+  val MODEL_VERSION: String = "MODEL_VERSION"
+  val MODEL_REPO_URI: String = "MODEL_REPO_URI"
+
+  // Some file constants
+  val OVERLAY_FILE: String = "/org/kiji/scoring/server/instance/overlay.xml"
+  val WEB_OVERLAY_FILE: String = "/org/kiji/scoring/server/instance/web-overlay.xml"
+  val JETTY_TEMPLATE_FILE: String = "/org/kiji/scoring/server/template/template.xml"
+
+  sealed trait ModelRepoScannerState
+  case object Running extends ModelRepoScannerState
+  case object Stopped extends ModelRepoScannerState
+
+  /**
    * Given a "template" WEB-INF .xml file on the classpath, this will produce a translated
    * version of the file replacing any "bookmark" values (i.e. "%PARAM%") with their actual values
    * which are dynamically generated based on the artifact being deployed.
@@ -440,9 +376,9 @@ class ModelRepoScanner(
    *     the ModelLifeCycle.
    */
   private def translateFile(
-      filePath: String,
-      targetFile: File,
-      bookmarkParams: Map[String, String]
+    filePath: String,
+    targetFile: File,
+    bookmarkParams: Map[String, String]
   ) {
     doAndClose(Source.fromInputStream(getClass.getResourceAsStream(filePath))) {
       fileStream: BufferedSource => {
@@ -472,11 +408,53 @@ class ModelRepoScanner(
   }
 
   /**
-   * Returns all the currently enabled lifecycles from the model repository.
+   * Returns the location information from the specified file. The input file is the name of the
+   * location file that was written using the writeLocationInformation method.
    *
-   * @return all the currently enabled lifecycles from the model repository.
+   * @param locationFile is the name of the location file containing the lifecycle location
+   *     information.
+   * @return the location information in the file.
    */
-  private def getAllEnabledLifecycles: Set[ModelLifeCycle] = {
-    mKijiModelRepo.getModelLifeCycles(null, 1, true).asScala.toSet
+  private def getLocationInformation(
+    locationFile: File
+  ): String = {
+    doAndClose(Source.fromFile(locationFile)) {
+      inputSource: BufferedSource => inputSource.mkString.trim
+    }
+  }
+
+  /**
+   * Deletes a given file or directory.
+   *
+   * @param file is the file/folder to delete.
+   */
+  private def delete(file: File) {
+    if (file.isDirectory) {
+      FileUtils.deleteDirectory(file)
+    } else {
+      file.delete()
+    }
+  }
+
+  /**
+   * Parses a Jetty template/instance directory using the "=" as the delimiter. Returns
+   * the two parts that comprise the directory.
+   *
+   * @param inputDirectory is the directory name to parse.
+   * @return a 2-tuple containing the two strings on either side of the "=" operator. If there is no
+   *     "=" in the string, then the second part will be None.
+   */
+  private def parseDirectoryName(
+    inputDirectory: String
+  ): (String, Option[String]) = {
+    val parts: Array[String] = inputDirectory.split("=")
+    if (parts.length == 1) {
+      (parts(0), None)
+    } else if (parts.length == 2) {
+      (parts(0), Some(parts(1)))
+    } else {
+      throw new IllegalArgumentException(
+        "Jetty template/instance directory must contain 0 or 1 '=', got: %s".format(inputDirectory))
+    }
   }
 }

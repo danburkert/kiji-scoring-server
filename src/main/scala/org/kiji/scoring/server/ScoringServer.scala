@@ -21,15 +21,16 @@ package org.kiji.scoring.server
 
 import java.io.File
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.eclipse.jetty.deploy.DeploymentManager
+import org.eclipse.jetty.deploy.providers.WebAppProvider
 import org.eclipse.jetty.overlays.OverlayedAppProvider
 import org.eclipse.jetty.server.AbstractConnector
 import org.eclipse.jetty.server.Server
 import org.eclipse.jetty.server.handler.ContextHandlerCollection
 import org.eclipse.jetty.server.handler.DefaultHandler
 import org.eclipse.jetty.server.handler.HandlerCollection
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.scala.DefaultScalaModule
 
 import org.kiji.modelrepo.KijiModelRepository
 import org.kiji.schema.Kiji
@@ -134,6 +135,9 @@ object ScoringServer {
     if (!(missingFiles.size == 0)) {
       sys.error("Missing files: %s".format(missingFiles.mkString(", ")))
     }
+
+    val webappDeployer: WebAppProvider = new WebAppProvider()
+    webappDeployer.setMonitoredDirName("server/webapps")
 
     // TODO what does this null do? should it be args(0)?
     val scoringServer = ScoringServer(null)

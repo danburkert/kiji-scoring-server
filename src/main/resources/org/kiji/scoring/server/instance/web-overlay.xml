@@ -36,7 +36,7 @@ version="2.4">
 
   <servlet>
     <servlet-name>%MODEL_NAME%</servlet-name>
-    <servlet-class>org.kiji.scoring.server.GenericScoringServlet</servlet-class>
+    <servlet-class>org.kiji.scoring.server.servlets.GenericScoringServlet</servlet-class>
     <init-param>
       <param-name>model-group</param-name>
       <param-value>%MODEL_GROUP%</param-value>

@@ -17,7 +17,7 @@
  * limitations under the License.
  */
 
-package org.kiji.web;
+package org.kiji.scoring.server;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -94,11 +94,11 @@ public class KijiScoringServerCell {
   }
 
   /**
-   * Get the cell's datum value.
+   * Get the cell's datum value as a JSON encoded string.
    *
-   * @return the cell's datum value
+   * @return the cell's datum value.
    */
-  public Object getValue() {
+  public String getValue() {
     return mValue;
   }
 
