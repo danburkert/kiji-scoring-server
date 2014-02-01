@@ -36,7 +36,6 @@ import org.slf4j.LoggerFactory
 
 import org.kiji.express.flow.util.ResourceUtil.doAndClose
 import org.kiji.modelrepo.KijiModelRepository
-import org.kiji.modelrepo.ModelLifeCycle
 import org.kiji.modelrepo.ArtifactName
 import org.kiji.modelrepo.uploader.MavenArtifactName
 
@@ -173,9 +172,9 @@ class ModelRepoScanner(
    * @return (undeployed lifecycles, newly deployed lifecycles)
    */
   def checkForUpdates(): (Set[ArtifactName], Set[ArtifactName]) = {
-    val allEnabledLifecycles: Map[ArtifactName, ModelLifeCycle] = getAllEnabledLifecycles.
-        foldLeft(Map[ArtifactName, ModelLifeCycle]()) {
-          (accumulatorMap: Map[ArtifactName, ModelLifeCycle], lifecycle: ModelLifeCycle) =>
+    val allEnabledLifecycles: Map[ArtifactName, ModelContainer] = getAllEnabledLifecycles.
+        foldLeft(Map[ArtifactName, ModelContainer]()) {
+          (accumulatorMap: Map[ArtifactName, ModelContainer], lifecycle: ModelContainer) =>
               accumulatorMap + (lifecycle.getArtifactName -> lifecycle)
         }
 
@@ -202,7 +201,7 @@ class ModelRepoScanner(
     val toDeploy: Set[ArtifactName] = allEnabledLifecycles.keySet.diff(toKeep.keySet)
     toDeploy.foreach {
       artifactName: ArtifactName => {
-        val lifecycle: ModelLifeCycle = allEnabledLifecycles(artifactName)
+        val lifecycle: ModelContainer = allEnabledLifecycles(artifactName)
         LOG.info("Deploying artifact: " + artifactName.getFullyQualifiedName)
         deployArtifact(lifecycle)
       }
@@ -215,10 +214,10 @@ class ModelRepoScanner(
    * Deploys the specified model artifact by either creating a new Jetty instance or by
    * downloading the artifact and setting up a new template/instance in Jetty.
    *
-   * @param lifecycle is the specified ModelLifeCycle to deploy.
+   * @param lifecycle is the specified ModelContainer to deploy.
    */
   private def deployArtifact(
-      lifecycle: ModelLifeCycle
+      lifecycle: ModelContainer
   ) {
     val mavenArtifact: MavenArtifactName = new MavenArtifactName(lifecycle.getArtifactName)
     val artifact: ArtifactName = lifecycle.getArtifactName
@@ -288,7 +287,7 @@ class ModelRepoScanner(
    */
   private def writeLocationInformation(
     artifactFileName: String,
-    lifecycle: ModelLifeCycle
+    lifecycle: ModelContainer
   ) {
     doAndClose(new PrintWriter(new File(webappsFolder, artifactFileName + ".loc"), "UTF-8")) {
       pw: PrintWriter => pw.println(lifecycle.getLocation)
@@ -298,15 +297,15 @@ class ModelRepoScanner(
   /**
    * Creates a new Jetty overlay instance.
    *
-   * @param lifecycle is the ModelLifeCycle to deploy.
+   * @param lifecycle is the ModelContainer to deploy.
    * @param templateName is the name of the template to which this instance belongs.
    * @param bookmarkParams contains a map of parameters and values used when configuring the WEB-INF
    *     specific files. An example of a parameter includes the context name used when addressing
    *     this lifecycle via HTTP which is dynamically populated based on the fully qualified name of
-   *     the ModelLifeCycle.
+   *     the ModelContainer.
    */
   private def createNewInstance(
-    lifecycle: ModelLifeCycle,
+    lifecycle: ModelContainer,
     templateName: String,
     bookmarkParams: Map[String, String]
   ) {
@@ -337,8 +336,8 @@ class ModelRepoScanner(
    *
    * @return all the currently enabled lifecycles from the model repository.
    */
-  private def getAllEnabledLifecycles: Set[ModelLifeCycle] = {
-    mKijiModelRepo.getModelLifeCycles(null, 1, true).asScala.toSet
+  private def getAllEnabledLifecycles: Set[ModelContainer] = {
+    mKijiModelRepo.getModelContainers(null, 1, true).asScala.toSet
   }
 }
 
@@ -373,7 +372,7 @@ object ModelRepoScanner {
    * @param bookmarkParams contains a map of parameters and values used when configuring the WEB-INF
    *     specific files. An example of a parameter includes the context name used when addressing
    *     this lifecycle via HTTP which is dynamically populated based on the fully qualified name of
-   *     the ModelLifeCycle.
+   *     the ModelContainer.
    */
   private def translateFile(
     filePath: String,

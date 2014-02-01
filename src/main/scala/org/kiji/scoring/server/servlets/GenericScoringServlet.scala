@@ -184,7 +184,7 @@ class GenericScoringServlet[T] extends HttpServlet {
 
 /** General resources used by all instances of GenericScoringServlet. */
 object GenericScoringServlet {
-  val LOG: Logger = LoggerFactory.getLogger(classOf[GenericScoringServlet])
+  val LOG: Logger = LoggerFactory.getLogger(classOf[GenericScoringServlet[_]])
   val MAPPER: ObjectMapper = new ObjectMapper()
   val GSON: Gson = new Gson
 
